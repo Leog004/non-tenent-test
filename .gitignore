@@ -1,0 +1,17 @@
+/server/node_modules
+/server/.env
+/client/node_modules
+/client/.env    
+
+.DS_Store
+/build
+/logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.vscode
+.idea
+*.local
+*.swp
+*.swo      
