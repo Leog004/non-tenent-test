@@ -112,6 +112,7 @@ app.get('/ui/manifest/payments', (req, res) => {
   // (B) Show a Form when user can create
   if (canCreate) {
     children.push({
+      order: 1,
       type: 'Form',
       submit: { label: 'Create Payment', url: 'POST:/api/payments' },
       fields: [
@@ -130,7 +131,9 @@ app.get('/ui/manifest/payments', (req, res) => {
       action: { type: 'http', method: 'POST', url: 'POST:/api/payments/{id}/refund' }
     })
   }
+
   children.push({
+    order: 2,
     type: 'DataTable',
     data: { source: 'GET:/api/payments?limit=50' },
     columns: [
@@ -141,6 +144,11 @@ app.get('/ui/manifest/payments', (req, res) => {
     ],
     rowActions
   })
+
+
+  // (D) Sort by order, then type (stable)
+  children.sort((a,b) => (a.order || 99) - (b.order || 99) || a.type.localeCompare(b.type))
+  
 
   res.json({
     version: '1.0',
