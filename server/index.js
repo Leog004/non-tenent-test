@@ -1,191 +1,173 @@
 import express from 'express'
 import cookieParser from 'cookie-parser'
-import jwt from 'jsonwebtoken'
 
 const app = express()
-app.use(express.json())
 app.use(cookieParser())
+app.use(express.json())
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret'
+// --- Simple session endpoint (demo only) ---
+app.get('/session', (req, res) => {
+  const caps = String(req.cookies?.caps || '').split(',').filter(Boolean)
+  res.json({ userId: 'demo-user', capabilities: caps })
+})
 
-// --- Simple in-memory data ---
-const DB = [
-  { id: 'p1', payer: 'Alice', amount: 120.0, status: 'PAID' },
-  { id: 'p2', payer: 'Bob',   amount:  80.0, status: 'DUE'  },
-  { id: 'p3', payer: 'Cara',  amount:  60.0, status: 'PAID' }
-]
-
-// --- Auth/session helpers ---
-function parseCaps(req) {
-  const token = req.cookies?.session
-  if (!token) return { userId: 'no-user-signed-in', capabilities: [] }
-  try {
-    const p = jwt.verify(token, JWT_SECRET)
-    return { userId: p.sub || 'user', capabilities: p.capabilities || [] }
-  } catch {
-    return { userId: 'no-user-signed-in', capabilities: [] }
-  }
-}
-
-function requireCaps(...needed) {
-  return (req, res, next) => {
-    const { capabilities } = parseCaps(req)
-    const have = new Set(capabilities)
-    const ok = needed.every(c => have.has(c))
-    if (!ok) return res.status(403).send('Forbidden')
-    next()
-  }
-}
-
-// --- Demo auth endpoints ---
+// --- Auth toggles (demo) ---
 app.get('/login', (req, res) => {
-  const caps = String(req.query.caps || '').split(',').map(s => s.trim()).filter(Boolean)
-  const token = jwt.sign({ sub: 'demo-user', capabilities: caps }, JWT_SECRET, { expiresIn: '1h' })
-  res.cookie('session', token, { httpOnly: true })
-  res.json({ ok: true, capabilities: caps })
+  const raw = String(req.query.caps || '')
+  res.cookie('caps', raw, { httpOnly: false })
+  res.json({ ok: true, caps: raw.split(',').filter(Boolean) })
 })
 app.get('/logout', (req, res) => {
-  res.clearCookie('session')
+  res.clearCookie('caps')
   res.json({ ok: true })
 })
 
-// --- Session info ---
-app.get('/session', (req, res) => {
-  res.json(parseCaps(req))
+// --- Editors list (filtered by caps) ---
+app.get('/ui/manifest/editors', (req, res) => {
+  const caps = new Set(String(req.cookies?.caps || '').split(',').filter(Boolean))
+  const editors = []
+  editors.push({ id:'GenericEditor', label:'Generic' })
+  if (caps.has('canCreatePayment')) editors.push({ id:'paymentEditor', label:'Payments' })
+  if (caps.has('canRefund'))        editors.push({ id:'refundEditor',  label:'Refunds'  })
+  // Add more editors toggled by Helm/env/health as needed
+  res.json(editors)
 })
 
-// --- UI Manifest (Refund action added only when cap present) ---
-// app.get('/ui/manifest/payments', (req, res) => {
-//   const { capabilities } = parseCaps(req)
-//   const actions = []
-//   if (capabilities.includes('canCreatePayment')) {
-//     actions.push({
-//       id: 'newPayment',
-//       label: 'New Payment',
-//       visibility: { anyOf: ['canCreatePayment'] },
-//       action: { type: 'openModal', target: 'newPaymentForm' } // not wired for brevity
-//     })
-//   }
-//   const rowActions = []
-//   if (capabilities.includes('canRefund')) {
-//     rowActions.push({
-//       id: 'refund',
-//       label: 'Refund',
-//       visibility: { anyOf: ['canRefund'] },
-//       action: { type: 'http', method: 'POST', url: 'POST:/api/payments/{id}/refund' }
-//     })
-//   }
-//   res.json({
-//     version: '1.0',
-//     page: {
-//       id: 'payments-index',
-//       layout: {
-//         type: 'Vertical',
-//         children: [
-//           { type: 'ActionBar', actions },
-//           {
-//             type: 'DataTable',
-//             data: { source: 'GET:/api/payments?limit=50' },
-//             columns: [
-//               { key: 'id', label: 'ID' },
-//               { key: 'payer', label: 'Payer' },
-//               { key: 'amount', label: 'Amount', format: 'currency' },
-//               { key: 'status', label: 'Status' }
-//             ],
-//             rowActions
-//           }
-//         ]
-//       }
-//     }
-//   })
-// })
-app.get('/ui/manifest/payments', (req, res) => {
-  const { capabilities } = parseCaps(req)
-  const canCreate = capabilities.includes('canCreatePayment')
-  const canRefund = capabilities.includes('canRefund')
+// --- Editor submanifests ---
+app.get('/ui/manifest/editor/:id', (req, res) => {
+  const id = req.params.id
+  const caps = new Set(String(req.cookies?.caps || '').split(',').filter(Boolean))
 
-  const children = []
-
-  // (A) Optional ActionBar (neutral)
-  children.push({ type: 'ActionBar', actions: [] })
-
-  // (B) Show a Form when user can create
-  if (canCreate) {
-    children.push({
-      order: 1,
-      type: 'Form',
-      submit: { label: 'Create Payment', url: 'POST:/api/payments' },
-      fields: [
-        { name: 'payer',  label: 'Payer',  component: 'Text'   },
-        { name: 'amount', label: 'Amount', component: 'Number' }
-      ]
+  if (id === 'GenericEditor') {
+    return res.json({
+      version: '1.0',
+      root: {
+        type: 'Vertical',
+        children: [
+          {
+            type: 'DataTable',
+            data: { source: 'GET:/api/generic-payments?limit=50' },
+            columns: [
+              { key: 'id', label: 'ID' },
+              { key: 'firstName',  label: 'First Name' },
+              { key: 'lastName', label: 'Last Name' },
+            ]
+          }
+        ]
+      }
     })
   }
 
-  // (C) Payments table with optional Refund row action
-  const rowActions = []
-  if (canRefund) {
-    rowActions.push({
-      id: 'refund',
-      label: 'Refund',
-      action: { type: 'http', method: 'POST', url: 'POST:/api/payments/{id}/refund' }
+  if (id === 'paymentEditor' && caps.has('canCreatePayment')) {
+    return res.json({
+      version: '1.0',
+      root: {
+        type: 'Vertical',
+        children: [
+          {
+            type: 'Form',
+            submit: { label: 'Create Payment', url: 'POST:/api/payments' },
+            fields: [
+              { name: 'payer',  label: 'Payer',  component: 'Text'   },
+              { name: 'amount', label: 'Amount', component: 'Number' }
+            ]
+          },
+          {
+            type: 'DataTable',
+            data: { source: 'GET:/api/payments?limit=50' },
+            columns: [
+              { key: 'id',     label: 'ID' },
+              { key: 'payer',  label: 'Payer' },
+              { key: 'amount', label: 'Amount', format: 'currency' },
+              { key: 'status', label: 'Status' }
+            ]
+          }
+        ]
+      }
     })
   }
 
-  children.push({
-    order: 2,
-    type: 'DataTable',
-    data: { source: 'GET:/api/payments?limit=50' },
-    columns: [
-      { key: 'id',     label: 'ID' },
-      { key: 'payer',  label: 'Payer' },
-      { key: 'amount', label: 'Amount', format: 'currency' },
-      { key: 'status', label: 'Status' }
-    ],
-    rowActions
-  })
+  if (id === 'refundEditor' && caps.has('canRefund')) {
+    return res.json({
+      version: '1.0',
+      root: {
+        type: 'DataTable',
+        data: { source: 'GET:/api/payments?status=PAID' },
+        columns: [
+          { key: 'id',     label: 'ID' },
+          { key: 'payer',  label: 'Payer' },
+          { key: 'amount', label: 'Amount', format: 'currency' },
+          { key: 'status', label: 'Status' }
+        ],
+        rowActions: [
+          { id: 'refund', label: 'Refund', action: { type: 'http', method: 'POST', url: 'POST:/api/payments/{id}/refund' } }
+        ]
+      }
+    })
+  }
 
+  res.status(404).send('Editor not found')
+})
 
-  // (D) Sort by order, then type (stable)
-  children.sort((a,b) => (a.order || 99) - (b.order || 99) || a.type.localeCompare(b.type))
-  
-
+// --- Page manifest that hosts EditorHost ---
+app.get('/ui/manifest/page/workspace', (req, res) => {
   res.json({
     version: '1.0',
-    page: { id: 'payments-index', layout: { type: 'Vertical', children } }
+    page: {
+      id: 'workspace',
+      layout: {
+        type: 'EditorHost',
+        editorsList: { source: 'GET:/ui/manifest/editors' },
+        panel:       { source: 'GET:/ui/manifest/editor/{id}' }
+      }
+    }
   })
 })
 
-// --- Data endpoints (server re-checks caps) ---
-app.get('/api/payments', (_req, res) => {
-  res.json(DB)
+// --- Data endpoints (with server-side enforcement) ---
+const DB = [
+  { id: 'p1', payer: 'Alice Smith', amount: 120.0, status: 'PAID' },
+  { id: 'p2', payer: 'Bob Johnson',   amount:  80.0, status: 'DUE'  },
+  { id: 'p3', payer: 'Cara Williams',  amount:  60.0, status: 'PAID' }
+]
+
+const hasCap = (req, name) => new Set(String(req.cookies?.caps || '').split(',').filter(Boolean)).has(name)
+
+app.get('/api/payments', (req, res) => {
+  const status = req.query.status
+  const data = status ? DB.filter(x => x.status === status) : DB
+  res.json(data)
 })
 
-app.post('/api/payments/:id/refund', requireCaps('canRefund'), (req, res) => {
-  const id = req.params.id
-  const p = DB.find(x => x.id === id)
+app.get('/api/generic-payments', (req, res) => {
+  // A more generic endpoint that returns payments with firstName/lastName instead of payer
+  const data = DB.map(x => ({
+    id: x.id,
+    firstName: x.payer.split(' ')[0],
+    lastName: x.payer.split(' ')[1] || '',
+  }))
+  res.json(data)
+});
+
+app.post('/api/payments', (req, res) => {
+  if (!hasCap(req, 'canCreatePayment')) return res.status(403).send('Forbidden')
+  const payer = String(req.body?.payer ?? '').trim()
+  const amount = Number(req.body?.amount)
+  if (!payer) return res.status(400).send('payer is required')
+  if (!Number.isFinite(amount) || amount < 0) return res.status(400).send('amount must be >= 0')
+  const id = 'p' + (Math.random().toString(36).slice(2,7))
+  DB.push({ id, payer, amount, status: 'DUE' })
+  res.json({ ok: true, id })
+})
+
+app.post('/api/payments/:id/refund', (req, res) => {
+  if (!hasCap(req, 'canRefund')) return res.status(403).send('Forbidden')
+  const p = DB.find(x => x.id === req.params.id)
   if (!p) return res.status(404).send('Not found')
   if (p.status !== 'PAID') return res.status(409).send('Only PAID can be refunded')
   p.status = 'REFUNDED'
-  res.json({ ok: true, id })
-})
-
-
-app.post('/api/payments', (req, res) => {
-  const { capabilities } = parseCaps(req)
-  const canCreate = capabilities.includes('canCreatePayment')
-
-  if (!canCreate) return res.status(403).send('Forbidden')
-
-  const payer = String(req.body?.payer ?? '').trim()
-  const amountNum = Number(req.body?.amount)
-  if (!payer) return res.status(400).send('payer is required')
-  if (!Number.isFinite(amountNum) || amountNum < 0) return res.status(400).send('amount must be >= 0')
-
-  const id = 'p' + (Math.random().toString(36).slice(2,7))
-  DB.push({ id, payer, amount: amountNum, status: 'DUE' })
-  res.json({ ok: true, id })
+  res.json({ ok: true })
 })
 
 const port = process.env.PORT || 3000
-app.listen(port, () => console.log(`BFF listening on http://localhost:${port}`))
+app.listen(port, () => console.log('BFF on http://localhost:' + port))

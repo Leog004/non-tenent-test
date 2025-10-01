@@ -2,26 +2,33 @@ import React from 'react'
 import { renderNode } from './ui/render'
 
 export default function App() {
-  const [caps, setCaps] = React.useState([])
   const [manifest, setManifest] = React.useState(null)
-  const [user, setUser] = React.useState('no-user-signed-in')
-  const [refreshTick, setRefreshTick] = React.useState(0)   // <-- add
+  const [user, setUser] = React.useState('no-user')
+  const [caps, setCaps] = React.useState([])
+  const [refreshTick, setRefreshTick] = React.useState(0)
 
-  async function refresh() {
-    const s = await fetch('/session', { credentials: 'include' }).then(r=>r.json())
+  async function load() {
+    const s = await fetch('/session', { credentials: 'include' }).then(r => r.json()).catch(()=>({userId:'no-user',capabilities:[]}))
+    setUser(s.userId || 'no-user')
     setCaps(s.capabilities || [])
-    setUser(s.userId || 'no-user-signed-in')
-    const m = await fetch('/ui/manifest/payments', { credentials: 'include' }).then(r=>r.json())
+
+    const m = await fetch('/ui/manifest/page/workspace', { credentials: 'include' }).then(r => r.json())
     setManifest(m)
-    setRefreshTick(t => t + 1) 
+      setRefreshTick(t => t + 1)
   }
 
-  React.useEffect(() => { refresh() }, [])
+  React.useEffect(() => { load() }, [])
+
+  const refresh = React.useCallback(() => {
+    setRefreshTick(t => t + 1)
+    // Optionally re-fetch top-level manifest:
+    //load()
+  }, [])
 
   const ctx = React.useMemo(() => ({
     can: new Set(caps),
-    refresh,                                               // <-- expose refresh
-    refreshTick,                                           // <-- expose tick for effects
+    refresh,
+    refreshTick,
     run: async (action, row) => {
       if (action.type === 'http') {
         const [method, urlSpec] = action.url.split(':', 2)
@@ -32,24 +39,24 @@ export default function App() {
           alert(`Error ${r.status}: ${text}`)
         } else {
           alert('Success')
-          refresh()                                        // <-- reuse the same refresh
+          refresh()
         }
       }
     }
-  }), [caps, refreshTick])    
+  }), [caps, refresh, refreshTick])
 
   return (
     <>
       <header>
-        <strong>Server-Driven UI Demo</strong>
+        <strong>Editors Manifest Demo</strong>
         <span>Signed in as <code>{user}</code></span>
         <span>Caps: <code>{caps.join(', ') || 'none'}</code></span>
-        <button onClick={() => fetch('/login?caps=canCreatePayment', {credentials:'include'}).then(refresh)}>Login: Create only</button>
-        <button onClick={() => fetch('/login?caps=canCreatePayment,canRefund', {credentials:'include'}).then(refresh)}>Login: Create + Refund</button>
-        <button onClick={() => fetch('/logout', {credentials:'include'}).then(refresh)}>Logout</button>
+        <button onClick={() => fetch('/login?caps=canCreatePayment', {credentials:'include'}).then(load)}>Login: Create only</button>
+        <button onClick={() => fetch('/login?caps=canCreatePayment,canRefund', {credentials:'include'}).then(load)}>Login: Create + Refund</button>
+        <button onClick={() => fetch('/logout', {credentials:'include'}).then(load)}>Logout</button>
       </header>
-      <div className="container">
-        {!manifest ? <div>Loading…</div> : renderNode(manifest.page.layout, ctx)}
+     <div className="container" key={refreshTick}>
+        {!manifest ? <div style={{padding:16}}>Loading…</div> : renderNode(manifest.page.layout, ctx)}
       </div>
     </>
   )

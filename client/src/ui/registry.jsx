@@ -1,8 +1,12 @@
+import EditorHost from './widgets/EditorHost'
+import Sidebar from './widgets/Sidebar'
 import ActionBar from './widgets/ActionBar'
 import DataTable from './widgets/DataTable'
 import Form from './widgets/Form'
 
 export const Registry = {
+  EditorHost,
+  Sidebar,
   ActionBar,
   DataTable,
   Form,
